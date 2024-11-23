@@ -20,3 +20,7 @@
     - work around a possible inotify issue - if now playing comes up as empty/undefined, read it manually from the file instead of complaining and not sending song data
     - make metadata reading a function, so we don't needlessly repeat code
     - minor logging changes
+* 0.5.2 - 11/23/24
+    - fix inotify bug causing hang in read loop
+    - make Exscript only required if Telnet is enabled
+    - minor tweaks to config layout/defaults
