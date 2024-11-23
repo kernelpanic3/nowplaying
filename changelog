@@ -16,3 +16,7 @@
     - add a version check, it looks like 3.6 is a sane minimum
     - some general cleanup
     - refactor logging
+* 0.5.1 - 7/01/23
+    - work around a possible inotify issue - if now playing comes up as empty/undefined, read it manually from the file instead of complaining and not sending song data
+    - make metadata reading a function, so we don't needlessly repeat code
+    - minor logging changes

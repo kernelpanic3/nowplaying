@@ -1,7 +1,7 @@
-# nowplaying.py 0.5 - watches text file uploaded from SAM using inotify, then POSTs to Icecast API to update now playing metadata, and sends to NOVIA 272 via Telnet for RDS
+# nowplaying.py 0.5.1 - watches text file uploaded from SAM using inotify, then POSTs to Icecast API to update now playing metadata, and sends to NOVIA 272 via Telnet for RDS
 # written by Emma Hones and Anastasia Mayer
 
-# Copyright (c) 2022-2023 Emma Hones and Anastasia Mayer
+# Copyright (c) 2022-2024 Emma Hones and Anastasia Mayer
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -21,10 +21,12 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
+npver = "0.5.1"
+
 # startup name + version check
-import sys, os, civl_util
+import sys, os, traceback, civl_util
 logger = civl_util.logger_initialise()
-logger.info('nowplaying.py v0.5')
+logger.info('nowplaying.py v%s' % npver)
 if not sys.version_info >= (3, 6):
     logger.critical('This script requires Python 3.6 or newer. You are running this script on Python %s.%s. Please upgrade and try again.' % (sys.version_info.major, sys.version_info.minor))
     sys.exit(1)
@@ -74,6 +76,15 @@ if args.verbose == True:
 
 try:
     # input
+    automation_type = config.get('Input', 'type')
+    if automation_type == "azuracast":
+        try:
+            import json
+            from websockets.sync.client import connect
+        except ImportError as e:
+            logger.critical('Loading required module %s failed!' % e.name)
+            logger.critical('Ensure that it is installed through your system package manager or pip.')
+            exit(1)
     dir = config.get('Input', 'directory')
     file = config.get('Input', 'file')
     rm_file = config.getboolean('Input', 'delete_file') # delete file after reading?
@@ -110,23 +121,28 @@ except configparser.Error as e:
         logger.critical('Check the syntax and try again.')
         sys.exit(1)
 
-# initialise some variables
-
-try:
-    # read initial NP data
-    with open(dir + "/" + file, 'r') as f:
-        np = f.read()
-        logger.debug('Found now playing file: %s/%s' % (dir, file))
-        logger.info('NP UPDATED: %s' % np)
-        # delete file if needed
-        if rm_file == True:
-            logger.debug('Deleting %s/%s' % (dir, file))
-            os.remove(dir + "/" + file)
-except FileNotFoundError:
-    # not ideal but not fatal
-    logger.error('Could not open now playing file at %s/%s for reading. Check that it exists and is accessible.' % (dir,file))
-    np = ''
+np = ''
 run = True
+
+# read now playing metadata
+
+def _read_NP():
+    global np
+    try:
+        # read the words, Brother Benny
+        with open(dir + "/" + file, 'r') as f:
+            np = f.read()
+            logger.debug('Reading now playing file: %s/%s' % (dir, file))
+            logger.info('Now playing: %s' % np)
+            # delete file if needed
+            if rm_file == True:
+                logger.debug('Deleting %s/%s' % (dir, file))
+                os.remove(dir + "/" + file)
+    except FileNotFoundError:
+        # not ideal but not fatal
+        logger.error('Could not read now playing file: %s/%s' % (dir,file))
+        logger.error('Check that it exists and is accessible.')
+        np = ''
 
 # replace various characters to sanitise for the API URL. this is a really, really cursed way to do it, but ...
 
@@ -144,17 +160,18 @@ def _send_icecast_thread():
             time.sleep(switch_time)
             # assemble and send request
             if np == '':
-                logger.warning('NOW PLAYING is not defined!')
-            else:
-                logger.info('Sending NOW PLAYING data ...')
-                response = requests.get(f"{icecast_protocol}://{icecast_server}:{icecast_port}/admin/metadata?mount=/{icecast_mountpoint}&mode=updinfo&song={_make_URL_ready(f'{np} / {branding}')}", auth=(icecast_user, icecast_pw))
-                logger.debug('Request: %s' % response.request.url)
-                logger.debug('Response: %s' % response.status_code)
-                response.raise_for_status()
-                time.sleep(switch_time)
+                logger.debug('Now playing is undefined/empty, reading manually from file ...')
+                _read_NP()
+
+            logger.info('Sending now playing data ...')
+            response = requests.get(f"{icecast_protocol}://{icecast_server}:{icecast_port}/admin/metadata?mount=/{icecast_mountpoint}&mode=updinfo&song={_make_URL_ready(f'{np} / {branding}')}", auth=(icecast_user, icecast_pw))
+            logger.debug('Request: %s' % response.request.url)
+            logger.debug('Response: %s' % response.status_code)
+            response.raise_for_status()
+            time.sleep(switch_time)
 
             # assemble and send request
-            logger.info('Sending STATION BRANDING data ...')
+            logger.info('Sending station branding data ...')
             thingy = random.choice(generic) # Choose a rando Generic Branding Thingy
             response = requests.get(f"{icecast_protocol}://{icecast_server}:{icecast_port}/admin/metadata?mount=/{icecast_mountpoint}&mode=updinfo&song={_make_URL_ready(f'{thingy} / {branding}')}", auth=(icecast_user, icecast_pw))
             logger.debug('Request: %s' % response.request.url)
@@ -175,28 +192,28 @@ def _send_rds_thread():
     logger.debug('RDS thread is here')
     try:
         if np == '':
-            logger.warning('NOW PLAYING is not defined!')
-        else:
-            logger.info('Sending RDS data ...')
-            # assemble PS and RT
-            print(separator)
-            ps_text = ps_prefix + '{} {}'.format(ps_branding, np.replace(separator, ' ').rstrip('\n')) + "\r" if strip_separators == True else ps_prefix + '{} {}'.format(ps_branding, np.rstrip('\n')) + "\r"
-            rt_text = rt_prefix + '{} / {}'.format(np.rstrip('\n'), rt_branding) + "\r"
-            # open telnet and start sending
-            logger.debug('Opening Telnet connection ...')
-            conn = Telnet()
-            conn.connect(telnet_host, telnet_port)
-            conn.set_prompt('[OK]')
-            logger.debug('Telnet connection opened')
-            logger.debug('PS: %s' % ps_text)
-            conn.execute(ps_text)
-            logger.debug('RDS received [OK] for PS')
-            logger.debug('RT: %s' % rt_text)
-            conn.execute(rt_text)
-            logger.debug('RDS received [OK] for RT')
-            logger.debug('Closing Telnet connection ...')
-            conn.close()
-            logger.debug('Telnet connection closed')
+            logger.debug('Now playing is undefined/empty, reading manually from file ...')
+            _read_NP()
+
+        logger.info('Sending RDS data ...')
+        # assemble PS and RT
+        ps_text = ps_prefix + '{} {}'.format(ps_branding, np.replace(separator, ' ').rstrip('\n')) + "\r" if strip_separators == True else ps_prefix + '{} {}'.format(ps_branding, np.rstrip('\n')) + "\r"
+        rt_text = rt_prefix + '{} / {}'.format(np.rstrip('\n'), rt_branding) + "\r"
+        # open telnet and start sending
+        logger.debug('Opening Telnet connection ...')
+        conn = Telnet()
+        conn.connect(telnet_host, telnet_port)
+        conn.set_prompt('[OK]')
+        logger.debug('Telnet connection opened')
+        logger.debug('PS: %s' % ps_text)
+        conn.execute(ps_text)
+        logger.debug('RDS received [OK] for PS')
+        logger.debug('RT: %s' % rt_text)
+        conn.execute(rt_text)
+        logger.debug('RDS received [OK] for RT')
+        logger.debug('Closing Telnet connection ...')
+        conn.close(force=True)
+        logger.debug('Telnet connection closed')
 
     except Exception as e:
             logger.critical('Exception raised in RDS thread: %s' % e)
@@ -208,47 +225,57 @@ def _main():
         logger.debug('main thread is here')
         global np
         global run
-        i = INotify()
-        try:
-            logger.debug('Adding inotify watch for %s' % dir)
-            i.add_watch(dir, flags.CREATE | flags.MODIFY)
-        except Exception as e:
-            logger.critical('Unable to add inotify watch for directory %s: %s' % (dir, e))
-            sys.exit(1)
+
+        if automation_type == "azuracast":
+            logger.debug('automation type is azuracast, skipping inotify')
+            pass
+        else:
+            i = INotify()
+            try:
+                logger.debug('Adding inotify watch for %s' % dir)
+                i.add_watch(dir, flags.CREATE | flags.MODIFY)
+            except Exception as e:
+                logger.critical('Unable to add inotify watch for directory %s: %s' % (dir, e))
+                sys.exit(1)
         
         while run:
-            i.read()
-            for event in i.read():
-                if event.name == file:
-                    # bingo, this is what we want
-                    with open(dir + "/" + file, 'r') as f:
-                        np = f.read()
-                    logger.info('NP UPDATED: %s' % np)
-                    # delete file if enabled
-                    if rm_file == True:
-                        logger.debug('Deleting %s/%s' % (dir, file))
-                        os.remove(dir + "/" + file)
-                    # fire the RDS thread
-                    if telnet_enable == True:                  
-                        logger.debug('Triggering RDS update')
-                        rds_thread = Thread(target=_send_rds_thread, daemon=True)
-                        rds_thread.start()
-                    else:
-                        logger.debug('RDS not enabled, skipping update')
+            if automation_type == "azuracast":
+                sn = "station:"+"test"
+                logger.debug('sn: %s' % sn)
+                with connect("ws://127.0.0.1/api/live/now-playing/websocket") as ws:
+                    logger.debug('with connect')
+                    ws.send(json.dumps({ "subs": { "station:test": {} }}))
+            else:
+                i.read()
+                for event in i.read():
+                    logger.debug('inotify: %s' % str(event))
+                    if event.name == file:
+                        # bingo, this is what we want
+                        logger.debug('event.name = %s, reading file' % event.name)
+                        _read_NP()
+                        # fire the RDS thread
+                        if telnet_enable == True:                  
+                            logger.debug('Triggering RDS update')
+                            rds_thread = Thread(target=_send_rds_thread, daemon=True)
+                            rds_thread.start()
+                        else:
+                            logger.debug('RDS not enabled, skipping update')
 
     except KeyboardInterrupt:
         logger.critical('Ctrl-C or other KeyboardInterrupt received, exiting ...')
         run=False
         return
     except Exception as e:
-            logger.critical('Exception raised in main thread: %s' % e)
-            sys.exit(1)
+        logger.critical('Exception raised in main thread: %s' % e)
+        sys.exit(1)
 
     logger.debug('run = false, exiting')
 
 if __name__ == '__main__':
     logger.debug('init thread is here')
     try:
+        # do a read on startup to initialise info
+        _read_NP()
         if icecast_enable == True:
             logger.debug('Icecast is enabled, starting thread')
             icecast_thread = Thread(target=_send_icecast_thread, daemon=True)
