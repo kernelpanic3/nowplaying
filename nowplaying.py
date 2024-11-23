@@ -1,4 +1,4 @@
-# nowplaying.py 0.5.1 - watches text file uploaded from SAM using inotify, then POSTs to Icecast API to update now playing metadata, and sends to NOVIA 272 via Telnet for RDS
+# nowplaying.py 0.5.2 - watches text file uploaded from radio automation using inotify, then POSTs to Icecast API to update now playing metadata, and sends via Telnet for RDS
 # written by Emma Hones and Anastasia Mayer
 
 # Copyright (c) 2022-2024 Emma Hones and Anastasia Mayer
@@ -21,7 +21,7 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-npver = "0.5.1"
+npver = "0.5.2"
 
 # startup name + version check
 import sys, os, traceback, civl_util
@@ -40,7 +40,6 @@ try:
     from threading import Thread
     import requests
     from inotify_simple import INotify, flags
-    from Exscript.protocols import Telnet
 except ImportError as e:
     logger.critical('Loading required module %s failed!' % e.name)
     logger.critical('Ensure that it is installed through your system package manager or pip.')
@@ -82,7 +81,7 @@ try:
             import json
             from websockets.sync.client import connect
         except ImportError as e:
-            logger.critical('Loading required module %s failed!' % e.name)
+            logger.critical('Loading required module %s for AzuraCast support failed!' % e.name)
             logger.critical('Ensure that it is installed through your system package manager or pip.')
             exit(1)
     dir = config.get('Input', 'directory')
@@ -108,6 +107,13 @@ try:
     icecast_port = config.getint('Icecast', 'port') # port for Icecast
     # telnet
     telnet_enable = config.getboolean('RDS', 'enable') # do we use Telnet?
+    if telnet_enable == True:
+        try:
+            from Exscript.protocols import Telnet
+        except ImportError as e:
+            logger.critical('Loading required module %s for Telnet support failed!' % e.name)
+            logger.critical('Ensure that it is installed through your system package manager or pip.')
+            exit(1)
     telnet_host = config.get('RDS', 'host') # host for Telnet
     telnet_port = config.getint('RDS', 'port') # port for Telnet
     ps_prefix = config.get('RDS', 'ps_prefix') # prefix for PS
@@ -243,10 +249,9 @@ def _main():
                 sn = "station:"+"test"
                 logger.debug('sn: %s' % sn)
                 with connect("ws://127.0.0.1/api/live/now-playing/websocket") as ws:
-                    logger.debug('with connect')
+                    logger.debug('WebSocket connected')
                     ws.send(json.dumps({ "subs": { "station:test": {} }}))
             else:
-                i.read()
                 for event in i.read():
                     logger.debug('inotify: %s' % str(event))
                     if event.name == file:
