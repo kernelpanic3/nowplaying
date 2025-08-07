@@ -21,7 +21,7 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-npver = "0.5.2"
+npver = "0.6.0"
 
 # startup name + version check
 import sys, os, traceback, civl_util
@@ -84,6 +84,8 @@ try:
             logger.critical('Loading required module %s for AzuraCast support failed!' % e.name)
             logger.critical('Ensure that it is installed through your system package manager or pip.')
             exit(1)
+    mode = config.get('Input', 'mode')
+    default_cut_description = config.get('Input', 'default_cut_description')
     dir = config.get('Input', 'directory')
     file = config.get('Input', 'file')
     rm_file = config.getboolean('Input', 'delete_file') # delete file after reading?
@@ -136,9 +138,22 @@ def _read_NP():
     global np
     try:
         # read the words, Brother Benny
+        logger.debug('Reading now playing file: %s/%s' % (dir, file))
         with open(dir + "/" + file, 'r') as f:
-            np = f.read()
-            logger.debug('Reading now playing file: %s/%s' % (dir, file))
+            if automation_type == "rivendell" and mode == "fancy":
+                contents = [word.strip() for word in f]
+                logger.debug('Fancy mode: contents = %s' % contents)
+                try:
+                    # this method is probably slightly cursed but w/e
+                    if contents[2] != default_cut_description:
+                        np = contents[0] + ' - ' + contents[1] + ' (' + contents[2] + ')'
+                    else:
+                        np = contents[0] + ' - ' + contents[1]
+                except IndexError:
+                    logger.debug('Fancy mode: IndexError')
+                    np = ''
+            else:
+                np = f.read()
             logger.info('Now playing: %s' % np)
             # delete file if needed
             if rm_file == True:
