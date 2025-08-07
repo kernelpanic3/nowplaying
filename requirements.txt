@@ -1,0 +1,5 @@
+Exscript==2.6.30
+Exscript==2.6.32
+inotify_simple==1.3.5
+Requests==2.32.4
+websockets==15.0.1

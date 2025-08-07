@@ -1,38 +1,23 @@
 # nowplaying.py
 
-nowplaying.py
+ Watches a text file with now playing data from radio automation software using inotify, then sends it (and/or generic branding slogans) to an Icecast stream and/or an RDS encoder.
 
-## Installation
+## Dependencies
 
-Use the package manager [pip](https://pip.pypa.io/en/stable/) to install foobar.
-
-```bash
-pip install foobar
-```
-
-## Usage
-
-```python
-import foobar
-
-# returns 'words'
-foobar.pluralize('word')
-
-# returns 'geese'
-foobar.pluralize('goose')
-
-# returns 'phenomenon'
-foobar.singularize('phenomena')
-```
+- inotify_simple
+- requests
+- websockets (for experimental Azuracast support)
+- Exscript (for telnet support, only needed for RDS encoders)
 
 ## Compatibility
 
 ### Automation
 
-| Model          | Supported | Details                    |
+| Software       | Supported | Details                    |
 |----------------|-----------|----------------------------|
 | Rivendell      | ✅        | Extensively tested with 3.x. Should work on 2.x and 4.x as well. |
 | SAM Broadcaster | ✅        | Daily use with version 4.8. |
+| Azuracast      | ❓        | EXPERIMENTAL and untested.   |
 
 ### RDS encoders
 
@@ -58,7 +43,7 @@ foobar.singularize('phenomena')
 | Model 701      | ⛔        | No support for dynamic RDS.                     |
 
 #### DEVA
-**NOTE: Support for DEVA encoders is EXPERIMENTAL.** DEVA's online demos do not forward the necessary port to allow for testing. I have written a "best guess" implementation based on the product manuals, but your mileage *will* vary.
+**NOTE: Support for DEVA encoders is EXPERIMENTAL.** DEVA's online demos do not forward the necessary port to allow for testing. I have attempted a "best guess" implementation based on the product manuals, but your mileage *will* vary. (And will probably be zero, truthfully.)
 
 | Model          | Supported | Details                    |
 |----------------|-----------|----------------------------|

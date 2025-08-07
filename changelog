@@ -24,3 +24,7 @@
     - fix inotify bug causing hang in read loop
     - make Exscript only required if Telnet is enabled
     - minor tweaks to config layout/defaults
+* 0.6.0 - 8/06/25
+    - fancy mode: read cut info from Rivendell, for multiple cuts in a single cart
+    - refactor some things into functions for Maximum Clean
+    - work around duplicate inotify events by using time deltas to ignore two writes in quick succession
