@@ -1,4 +1,4 @@
-# nowplaying.py 0.5.2 - watches text file uploaded from radio automation using inotify, then POSTs to Icecast API to update now playing metadata, and sends via Telnet for RDS
+# nowplaying.py 0.6.0 - watches text file uploaded from radio automation using inotify, then POSTs to Icecast API to update now playing metadata, and sends via Telnet for RDS
 # written by Emma Hones and Anastasia Mayer
 
 # Copyright (c) 2022-2024 Emma Hones and Anastasia Mayer
@@ -130,6 +130,7 @@ except configparser.Error as e:
         sys.exit(1)
 
 np = ''
+contents = ''
 run = True
 
 # read now playing metadata
@@ -154,7 +155,8 @@ def _read_NP():
                     np = ''
             else:
                 np = f.read()
-            logger.info('Now playing: %s' % np)
+            if np != '':
+                logger.info('Now playing: %s' % np)
             # delete file if needed
             if rm_file == True:
                 logger.debug('Deleting %s/%s' % (dir, file))
@@ -171,6 +173,27 @@ def _make_URL_ready(text):
     return text.replace('%', '%25').replace('$', '%24').replace('&', '%26').replace('+', '%2B').replace(',', '%2C').replace('/', '%2F').replace(':', '%eA').replace(';', '%3B').replace('=', '%3D').replace('?', '%3F').replace('@', '%40').replace(' ', '%20').replace('"', '%22').replace('<', '%3C').replace('>', '%3E').replace('#', '%23').replace('{', '%7B').replace('}', '%7D').replace('|', '%7C').replace('\\', '%5C').replace('^', '%5E').replace('~', '%7E').replace('[', '%5B').replace(']', '%5D').replace('`', '%60')
 
 # handling data
+def _icecast_NP():
+    if np == '':
+        logger.debug('Now playing is undefined/empty, reading manually from file ...')
+        _read_NP()
+        if np == '':
+            logger.warning('Not sending now playing data as the file appears to be empty.')
+            raise TypeError
+
+    logger.info('Sending now playing data ...')
+    response = requests.get(f"{icecast_protocol}://{icecast_server}:{icecast_port}/admin/metadata?mount=/{icecast_mountpoint}&mode=updinfo&song={_make_URL_ready(f'{np} / {branding}')}", auth=(icecast_user, icecast_pw))
+    logger.debug('Request: %s' % response.request.url)
+    logger.debug('Response: %s' % response.status_code)
+    response.raise_for_status()
+
+def _icecast_branding():
+    logger.info('Sending station branding data ...')
+    thingy = random.choice(generic) # Choose a rando Generic Branding Thingy
+    response = requests.get(f"{icecast_protocol}://{icecast_server}:{icecast_port}/admin/metadata?mount=/{icecast_mountpoint}&mode=updinfo&song={_make_URL_ready(f'{thingy} / {branding}')}", auth=(icecast_user, icecast_pw))
+    logger.debug('Request: %s' % response.request.url)
+    logger.debug('Response: %s' % response.status_code)
+    response.raise_for_status()
 
 def _send_icecast_thread():
     logger.debug('Icecast thread is here')
@@ -178,26 +201,16 @@ def _send_icecast_thread():
 
     while run:
         try:
+            logger.debug('running Icecast now playing function')
+            try:
+                _icecast_NP()
+            except TypeError:
+                logger.debug('now playing function returned TypeError')
+            else:
+                time.sleep(switch_time)
+            logger.debug('running Icecast station branding function')
+            _icecast_branding()
             time.sleep(switch_time)
-            # assemble and send request
-            if np == '':
-                logger.debug('Now playing is undefined/empty, reading manually from file ...')
-                _read_NP()
-
-            logger.info('Sending now playing data ...')
-            response = requests.get(f"{icecast_protocol}://{icecast_server}:{icecast_port}/admin/metadata?mount=/{icecast_mountpoint}&mode=updinfo&song={_make_URL_ready(f'{np} / {branding}')}", auth=(icecast_user, icecast_pw))
-            logger.debug('Request: %s' % response.request.url)
-            logger.debug('Response: %s' % response.status_code)
-            response.raise_for_status()
-            time.sleep(switch_time)
-
-            # assemble and send request
-            logger.info('Sending station branding data ...')
-            thingy = random.choice(generic) # Choose a rando Generic Branding Thingy
-            response = requests.get(f"{icecast_protocol}://{icecast_server}:{icecast_port}/admin/metadata?mount=/{icecast_mountpoint}&mode=updinfo&song={_make_URL_ready(f'{thingy} / {branding}')}", auth=(icecast_user, icecast_pw))
-            logger.debug('Request: %s' % response.request.url)
-            logger.debug('Response: %s' % response.status_code)
-            response.raise_for_status()
         
         except requests.exceptions.ConnectionError as e:
             logger.error('Error sending data to %s port %s: %s' % (icecast_server, icecast_port, e.args[0].reason))
@@ -246,6 +259,7 @@ def _main():
         logger.debug('main thread is here')
         global np
         global run
+        lastevent = time.time()
 
         if automation_type == "azuracast":
             logger.debug('automation type is azuracast, skipping inotify')
@@ -268,8 +282,13 @@ def _main():
                     ws.send(json.dumps({ "subs": { "station:test": {} }}))
             else:
                 for event in i.read():
-                    logger.debug('inotify: %s' % str(event))
-                    if event.name == file:
+                    logger.debug('inotify: %s at %s' % (str(event), time.time()))
+                    thisevent = time.time()
+                    delta = thisevent - lastevent                        
+                    logger.debug('lastevent: %s thisevent: %s delta: %s' % (lastevent, thisevent, delta))
+                    if delta < 0.005:
+                        logger.debug('delta < 0.005, assuming duplicate write and skipping')
+                    elif event.name == file:
                         # bingo, this is what we want
                         logger.debug('event.name = %s, reading file' % event.name)
                         _read_NP()
@@ -280,6 +299,7 @@ def _main():
                             rds_thread.start()
                         else:
                             logger.debug('RDS not enabled, skipping update')
+                        lastevent = thisevent
 
     except KeyboardInterrupt:
         logger.critical('Ctrl-C or other KeyboardInterrupt received, exiting ...')
